@@ -8,19 +8,19 @@ from imblearn.over_sampling import SMOTE
 import matplotlib.pyplot as plt
 import warnings
 
-# Ignorar warnings para una salida más limpia
+# Ignore warnings for a cleaner output
 warnings.filterwarnings('ignore', category=UserWarning)
 
 
 def find_optimal_k(input_csv: str, seed: int = 42):
     """
-    Prueba diferentes valores de k para SelectKBest y encuentra el número óptimo de características.
+    Tests different values of k for SelectKBest and finds the optimal number of features.
     """
     df = pd.read_csv(input_csv)
     y = df['BRS3'].astype(int)
     X_raw = df.drop(columns=['BRS3', 'patient_id'])
 
-    # Preprocesamiento básico
+    # Basic preprocessing
     X = X_raw.apply(pd.to_numeric, errors="coerce").fillna(0)
     X[X < 0] = 0
 
@@ -29,11 +29,11 @@ def find_optimal_k(input_csv: str, seed: int = 42):
 
     results = []
 
-    print(f"Probando k desde 1 hasta {max_features}...")
+    print(f"Testing k from 1 to {max_features}...")
 
     for k in k_values:
-        print(f"  - Probando k={k}")
-        # Usamos menos splits (ej. 5) para que la ejecución sea más rápida
+        print(f"  - Testing k={k}")
+        # We use fewer splits (e.g., 5) for faster execution
         kf = KFold(n_splits=5, shuffle=True, random_state=seed)
 
         fold_f1 = []
@@ -50,8 +50,8 @@ def find_optimal_k(input_csv: str, seed: int = 42):
             smote = SMOTE(random_state=seed)
             X_train_res, y_train_res = smote.fit_resample(X_train_sel, y_train)
 
-            # --- LÍNEA CORREGIDA ---
-            # Se eliminó el argumento 'N_ensemble_configurations'
+            # --- CORRECTED LINE ---
+            # The 'N_ensemble_configurations' argument was removed
             classifier = TabPFNClassifier(device='cpu')
 
             classifier.fit(X_train_res, y_train_res)
@@ -69,32 +69,31 @@ def find_optimal_k(input_csv: str, seed: int = 42):
     results_df = pd.DataFrame(results)
 
     plt.figure(figsize=(12, 6))
-    plt.plot(results_df['k'], results_df['mean_f1_score'], marker='s', label='Mean F1-Score (Clase 1)')
+    plt.plot(results_df['k'], results_df['mean_f1_score'], marker='s', label='Mean F1-Score (Class 1)')
     plt.plot(results_df['k'], results_df['mean_balanced_accuracy'], marker='^', label='Mean Balanced Accuracy')
 
     best_k_f1 = results_df.loc[results_df['mean_f1_score'].idxmax()]
     plt.axvline(x=best_k_f1['k'], color='crimson', linestyle='--',
-                label=f"Mejor k = {int(best_k_f1['k'])} (F1-Score: {best_k_f1['mean_f1_score']:.3f})")
+                label=f"Best k = {int(best_k_f1['k'])} (F1-Score: {best_k_f1['mean_f1_score']:.3f})")
 
-    plt.title('Rendimiento del Modelo vs. Número de Características (k)')
-    plt.xlabel('Número de Características (k)')
-    plt.ylabel('Puntuación de la Métrica')
+    plt.title('Model Performance vs. Number of Features (k)')
+    plt.xlabel('Number of Features (k)')
+    plt.ylabel('Metric Score')
     plt.xticks(k_values)
     plt.grid(True)
     plt.legend()
     plt.savefig('k_features_performance.png')
 
-    print("\n--- Resultados de la Optimización ---")
+    print("\n--- Optimization Results ---")
     print(results_df.round(4).to_string())
-    print(f"\n🏆 Mejor rendimiento se obtuvo con k = {int(best_k_f1['k'])}")
-    print("Gráfico guardado en 'k_features_performance.png'")
+    print(f"\n🏆 Best performance was achieved with k = {int(best_k_f1['k'])}")
+    print("Plot saved to 'k_features_performance.png'")
 
 
 if __name__ == "__main__":
-    # Asegúrate de que la ruta al archivo sea correcta para tu sistema
+    # Make sure the file path is correct for your system
     try:
         find_optimal_k('dataset/clinical_data_BRS_binary.csv')
     except FileNotFoundError:
-        print("\nError: No se encontró el archivo 'clinical_data_BRS_binary.csv'.")
-        print("Por favor, asegúrate de que el script se ejecute desde el directorio correcto o ajusta la ruta.")
-
+        print("\nError: 'clinical_data_BRS_binary.csv' file not found.")
+        print("Please make sure the script is run from the correct directory or adjust the path.")

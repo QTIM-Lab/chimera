@@ -13,6 +13,7 @@ Enhancements for Grand Challenge submission:
 - Dynamic feature count cap and CPU-only execution for container safety
 - Backward-compatible CV evaluation function
 - Added SMOTE to handle class imbalance during training and CV.
+- Added Feature Engineering to create more informative features.
 """
 from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
 from sklearn.model_selection import KFold
@@ -59,7 +60,6 @@ def set_global_seed(seed: int) -> None:
             torch.manual_seed(seed)
             if hasattr(torch, "cuda") and torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
-            # Make algorithms deterministic when possible
             if hasattr(torch, "use_deterministic_algorithms"):
                 try:
                     torch.use_deterministic_algorithms(True)
@@ -70,6 +70,41 @@ def set_global_seed(seed: int) -> None:
                 torch.backends.cudnn.benchmark = False
         except Exception:
             pass
+
+# <<< --- FEATURE ENGINEERING START --- >>>
+def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Creates new features from the existing data to improve model performance.
+    """
+    # Make a copy to avoid modifying the original DataFrame
+    df_eng = df.copy()
+
+    # 1. Binning 'age'
+    # Creates categorical groups for age
+    if 'age' in df_eng.columns:
+        age_bins = [0, 60, 75, 120]
+        age_labels = ['age_lt_60', 'age_60_75', 'age_gt_75']
+        df_eng['age_group'] = pd.cut(df_eng['age'], bins=age_bins, labels=age_labels, right=False)
+        # One-hot encode the new age groups
+        df_eng = pd.get_dummies(df_eng, columns=['age_group'], prefix='age')
+
+    # 2. Binning 'no_instillations'
+    # Groups the number of instillations, treating -1 as a separate category
+    if 'no_instillations' in df_eng.columns:
+        inst_bins = [-2, 0, 10, 20, 100]
+        inst_labels = ['inst_unknown', 'inst_1_10', 'inst_11_20', 'inst_gt_20']
+        df_eng['inst_group'] = pd.cut(df_eng['no_instillations'], bins=inst_bins, labels=inst_labels, right=True)
+        # One-hot encode the new instillation groups
+        df_eng = pd.get_dummies(df_eng, columns=['inst_group'], prefix='inst')
+
+    # 3. Interaction Feature: 'female' and 'smoker'
+    # Creates a feature that is 1 only if the patient is a female smoker
+    if 'female' in df_eng.columns and 'smoker' in df_eng.columns:
+        df_eng['female_smoker'] = df_eng['female'].astype(int) * df_eng['smoker'].astype(int)
+
+    return df_eng
+# <<< --- FEATURE ENGINEERING END --- >>>
+
 def _ensure_numeric_df(df: pd.DataFrame) -> pd.DataFrame:
     # Keep only numeric columns, coerce others if present
     num_df = df.apply(pd.to_numeric, errors="coerce")
@@ -94,7 +129,6 @@ def _align_features(df: pd.DataFrame, feature_columns: List[str]) -> pd.DataFram
 def tabpfn_predict(training_data_path: str, output_name: str, k_features: int = 12, seed: int = 42) -> None:
     """
     Perform 10-fold CV over the entire labeled dataset and save out-of-fold predictions to CSV.
-    SMOTE is applied to the training data within each fold to handle class imbalance.
     """
     set_global_seed(int(seed))
     training_data_path = Path(training_data_path)
@@ -103,7 +137,11 @@ def tabpfn_predict(training_data_path: str, output_name: str, k_features: int = 
         return
 
     # Load dataset
-    df = pd.read_csv(training_data_path)
+    df_raw = pd.read_csv(training_data_path)
+
+    # Apply Feature Engineering
+    df = engineer_features(df_raw)
+
     if "BRS3" not in df.columns or "patient_id" not in df.columns:
         print("Error: Input CSV must contain 'patient_id' and 'BRS3' columns for CV mode.")
         return
@@ -115,44 +153,34 @@ def tabpfn_predict(training_data_path: str, output_name: str, k_features: int = 
     # Cross validation
     FOLD_COUNT = 10
     kf = KFold(n_splits=FOLD_COUNT, shuffle=True, random_state=int(seed))
-    accuracy_list = []
-    auroc_list = []
     results = []
+    auroc_list = []
 
     fold_counter = 0
     for train_idx, test_idx in kf.split(df):
         fold_counter += 1
         print(f"--- Processing Fold {fold_counter}/{FOLD_COUNT} ---")
-        # Data split
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
         y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
 
-        # Feature selection (dynamic k)
         n_feats = X_train.shape[1]
         k = max(1, min(k_features, n_feats)) if n_feats > 0 else 1
         fselect = SelectKBest(chi2, k=k)
         X_train_new = fselect.fit_transform(X_train, y_train)
-        # We need to get the column names for the test set
         selected_features = X_train.columns[fselect.get_support()]
         X_test_new = X_test[selected_features]
 
-        # --- SMOTE APPLIED HERE ---
-        # Apply SMOTE only to the training data of the current fold
         print(f"Original training distribution: {y_train.value_counts().to_dict()}")
         smote = SMOTE(random_state=int(seed))
         X_train_resampled, y_train_resampled = smote.fit_resample(X_train_new, y_train)
         print(f"Resampled training distribution: {pd.Series(y_train_resampled).value_counts().to_dict()}")
 
-        # Initialize a classifier (CPU for container safety)
         clf = TabPFNClassifier(device="cpu")
-        # Train on the balanced (resampled) data
         clf.fit(X_train_resampled, y_train_resampled)
 
-        # Prediction on the original, unseen test data
         prediction_probabilities = clf.predict_proba(X_test_new)
         predictions = clf.predict(X_test_new)
 
-        # Match predictions to entries in the whole dataset
         for i, row_idx in enumerate(X_test.index):
             results.append(
                 {
@@ -162,53 +190,38 @@ def tabpfn_predict(training_data_path: str, output_name: str, k_features: int = 
                     "prediction": int(predictions[i]),
                 }
             )
-
-        # Metrics
         try:
             auroc = roc_auc_score(y_test, prediction_probabilities[:, 1])
             auroc_list.append(auroc)
         except Exception:
             pass
-        accuracy = accuracy_score(y_test, predictions)
-        accuracy_list.append(accuracy)
 
-    # Sort samples by patient ID
     results_df = pd.DataFrame(results).sort_values(by="slide_id")
-
-    # Model performance metrics
     auroc_avg = float(np.mean(auroc_list)) if len(auroc_list) else float("nan")
-    auroc_sd = float(np.std(auroc_list)) if len(auroc_list) else float("nan")
-    accuracy_avg = float(np.mean(accuracy_list)) if len(accuracy_list) else float("nan")
-    accuracy_sd = float(np.std(accuracy_list)) if len(accuracy_list) else float("nan")
 
     print("\n--- CV Results ---")
-    print("Fold count:", FOLD_COUNT)
     print("Average AUROC:", auroc_avg)
-    print("AUROC SD:", auroc_sd)
-    print("Average Accuracy:", accuracy_avg)
-    print("Accuracy SD:", accuracy_sd)
     try:
         print("\nClassification Report (on out-of-fold predictions):")
         print(classification_report(results_df["label"], results_df["prediction"]))
     except Exception:
         pass
 
-    # Save to csv
     results_df.to_csv(output_name, index=False)
     print("Saved scores and predictions to", output_name)
 
 
 def train_and_save_model(training_data_path: str, save_model_path: str, k_features: int = 12, seed: int = 42) -> None:
-    """
-    Train TabPFN on the full labeled dataset and save the selector+model+schema.
-    SMOTE is applied to the full dataset before final training.
-    """
+    """Train TabPFN on the full labeled dataset and save the selector+model+schema."""
     set_global_seed(int(seed))
     training_data_path = Path(training_data_path)
     if not training_data_path.is_file():
         raise FileNotFoundError(f"Input file not found: {training_data_path}")
 
-    df = pd.read_csv(training_data_path)
+    df_raw = pd.read_csv(training_data_path)
+    # Apply Feature Engineering
+    df = engineer_features(df_raw)
+
     if "BRS3" not in df.columns or "patient_id" not in df.columns:
         raise ValueError("Input CSV must contain 'patient_id' and 'BRS3' columns for training.")
 
@@ -216,20 +229,16 @@ def train_and_save_model(training_data_path: str, save_model_path: str, k_featur
     X = _ensure_numeric_df(df[feature_columns]) if feature_columns else pd.DataFrame(index=df.index)
     y = df["BRS3"].astype(int)
 
-    # Feature selection
     n_feats = X.shape[1]
     k = max(1, min(k_features, n_feats)) if n_feats > 0 else 1
     fselect = SelectKBest(chi2, k=k)
     X_selected = fselect.fit_transform(X, y)
 
-    # --- SMOTE APPLIED HERE ---
-    # Apply SMOTE to the entire dataset before the final training
     print(f"Original training distribution: {y.value_counts().to_dict()}")
     smote = SMOTE(random_state=int(seed))
     X_resampled, y_resampled = smote.fit_resample(X_selected, y)
     print(f"Resampled training distribution: {pd.Series(y_resampled).value_counts().to_dict()}")
 
-    # Train the final model on the balanced (resampled) data
     clf = TabPFNClassifier(device="cpu")
     clf.fit(X_resampled, y_resampled)
 
@@ -262,21 +271,18 @@ def predict_with_saved_model(test_data_path: str, model_path: str, output_csv: s
     selector = bundle["selector"]
     clf = bundle["clf"]
 
-    df = pd.read_csv(test_data_path)
-    # Identify ID column
+    df_raw = pd.read_csv(test_data_path)
+    # Apply the same feature engineering
+    df = engineer_features(df_raw)
+
     id_col = "patient_id" if "patient_id" in df.columns else ("slide_id" if "slide_id" in df.columns else None)
     if id_col is None:
         raise ValueError("Input CSV must contain an identifier column: 'patient_id' or 'slide_id'.")
 
-    # Extract features aligned to training schema
     X_raw = df.drop(columns=[c for c in ["BRS3", id_col] if c in df.columns])
-    # Ensure all training-time columns exist, in order
     X_aligned = _align_features(X_raw, feature_columns)
-
-    # Transform with saved selector
     X_sel = selector.transform(X_aligned)
 
-    # Predict
     probs = clf.predict_proba(X_sel)
     preds = clf.predict(X_sel)
 
