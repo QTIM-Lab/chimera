@@ -59,6 +59,36 @@ docker run --rm \
   -v /path/to/model.joblib:/model/model.joblib:ro \
   chimera-tabpfn:latest
 ```
+
+Windows (PowerShell) example:
+```powershell
+# Replace the host paths with your actual locations
+# Use backtick ` for line continuation in PowerShell
+# Wrap paths with spaces in double quotes
+
+docker run --rm `
+  -e CHIMERA_CLINICAL_JSON=/input/chimera-clinical-data-of-bladder-cancer-patients.json `
+  -e CHIMERA_OUTPUT_JSON=/output/brs-probability.json `
+  -e CHIMERA_MODEL=/model/model.joblib `
+  -v C:\path\to\patient.json:/input/chimera-clinical-data-of-bladder-cancer-patients.json:ro `
+  -v C:\path\to\outdir:/output `
+  -v C:\path\to\model.joblib:/model/model.joblib:ro `
+  chimera-tabpfn:latest
+
+# Example with spaces in path (quotes only around the Windows side):
+docker run --rm `
+  -e CHIMERA_CLINICAL_JSON=/input/chimera-clinical-data-of-bladder-cancer-patients.json `
+  -e CHIMERA_OUTPUT_JSON=/output/brs-probability.json `
+  -e CHIMERA_MODEL=/model/model.joblib `
+  -v "C:\Users\Me\My Data\patient.json":/input/chimera-clinical-data-of-bladder-cancer-patients.json:ro `
+  -v "C:\Users\Me\My Data\outdir":/output `
+  -v "C:\Users\Me\My Data\model.joblib":/model/model.joblib:ro `
+  chimera-tabpfn:latest
+```
+Notes (Windows):
+- If you use Docker Desktop with WSL2, you can also mount files from Linux paths, e.g., -v /mnt/c/Users/Me/patient.json:/input/...
+- Ensure the destination paths inside the container match the CHIMERA_* variables shown above.
+
 This writes a single float to /output/brs-probability.json.
 
 Option B — Image with embedded model
@@ -67,6 +97,15 @@ Option B — Image with embedded model
 docker run --rm \
   -e CHIMERA_CLINICAL_JSON=/input/chimera-clinical-data-of-bladder-cancer-patients.json \
   -e CHIMERA_OUTPUT_JSON=/output/brs-probability.json \
+  chimera-tabpfn:with-model
+```
+
+Windows (PowerShell) example:
+```powershell
+# Requires you built chimera-tabpfn:with-model (step 2B)
+docker run --rm `
+  -e CHIMERA_CLINICAL_JSON=/input/chimera-clinical-data-of-bladder-cancer-patients.json `
+  -e CHIMERA_OUTPUT_JSON=/output/brs-probability.json `
   chimera-tabpfn:with-model
 ```
 
