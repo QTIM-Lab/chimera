@@ -12,18 +12,14 @@ Enhancements for Grand Challenge submission:
 - Robust handling of NaNs and negative values for chi2 feature selection
 - Dynamic feature count cap and CPU-only execution for container safety
 - Backward-compatible CV evaluation function
+- Added SMOTE to handle class imbalance during training and CV.
 """
-
-def warn(*args, **kwargs):  # sklearn warns when feature names change after selection; suppress noisy warnings
-    pass
-import warnings
-warnings.warn = warn
-
 from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
 from sklearn.model_selection import KFold
 from sklearn.feature_selection import SelectKBest, chi2
 
 from tabpfn import TabPFNClassifier
+from imblearn.over_sampling import SMOTE
 
 from pathlib import Path
 import argparse
@@ -98,6 +94,7 @@ def _align_features(df: pd.DataFrame, feature_columns: List[str]) -> pd.DataFram
 def tabpfn_predict(training_data_path: str, output_name: str, k_features: int = 12, seed: int = 42) -> None:
     """
     Perform 10-fold CV over the entire labeled dataset and save out-of-fold predictions to CSV.
+    SMOTE is applied to the training data within each fold to handle class imbalance.
     """
     set_global_seed(int(seed))
     training_data_path = Path(training_data_path)
@@ -122,7 +119,10 @@ def tabpfn_predict(training_data_path: str, output_name: str, k_features: int = 
     auroc_list = []
     results = []
 
+    fold_counter = 0
     for train_idx, test_idx in kf.split(df):
+        fold_counter += 1
+        print(f"--- Processing Fold {fold_counter}/{FOLD_COUNT} ---")
         # Data split
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
         y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
@@ -132,13 +132,23 @@ def tabpfn_predict(training_data_path: str, output_name: str, k_features: int = 
         k = max(1, min(k_features, n_feats)) if n_feats > 0 else 1
         fselect = SelectKBest(chi2, k=k)
         X_train_new = fselect.fit_transform(X_train, y_train)
-        X_test_new = X_test.loc[:, fselect.get_support()]
+        # We need to get the column names for the test set
+        selected_features = X_train.columns[fselect.get_support()]
+        X_test_new = X_test[selected_features]
+
+        # --- SMOTE APPLIED HERE ---
+        # Apply SMOTE only to the training data of the current fold
+        print(f"Original training distribution: {y_train.value_counts().to_dict()}")
+        smote = SMOTE(random_state=int(seed))
+        X_train_resampled, y_train_resampled = smote.fit_resample(X_train_new, y_train)
+        print(f"Resampled training distribution: {pd.Series(y_train_resampled).value_counts().to_dict()}")
 
         # Initialize a classifier (CPU for container safety)
         clf = TabPFNClassifier(device="cpu")
-        clf.fit(X_train_new, y_train)
+        # Train on the balanced (resampled) data
+        clf.fit(X_train_resampled, y_train_resampled)
 
-        # Prediction
+        # Prediction on the original, unseen test data
         prediction_probabilities = clf.predict_proba(X_test_new)
         predictions = clf.predict(X_test_new)
 
@@ -171,12 +181,14 @@ def tabpfn_predict(training_data_path: str, output_name: str, k_features: int = 
     accuracy_avg = float(np.mean(accuracy_list)) if len(accuracy_list) else float("nan")
     accuracy_sd = float(np.std(accuracy_list)) if len(accuracy_list) else float("nan")
 
+    print("\n--- CV Results ---")
     print("Fold count:", FOLD_COUNT)
     print("Average AUROC:", auroc_avg)
     print("AUROC SD:", auroc_sd)
     print("Average Accuracy:", accuracy_avg)
     print("Accuracy SD:", accuracy_sd)
     try:
+        print("\nClassification Report (on out-of-fold predictions):")
         print(classification_report(results_df["label"], results_df["prediction"]))
     except Exception:
         pass
@@ -187,7 +199,10 @@ def tabpfn_predict(training_data_path: str, output_name: str, k_features: int = 
 
 
 def train_and_save_model(training_data_path: str, save_model_path: str, k_features: int = 12, seed: int = 42) -> None:
-    """Train TabPFN on the full labeled dataset and save the selector+model+schema."""
+    """
+    Train TabPFN on the full labeled dataset and save the selector+model+schema.
+    SMOTE is applied to the full dataset before final training.
+    """
     set_global_seed(int(seed))
     training_data_path = Path(training_data_path)
     if not training_data_path.is_file():
@@ -201,13 +216,22 @@ def train_and_save_model(training_data_path: str, save_model_path: str, k_featur
     X = _ensure_numeric_df(df[feature_columns]) if feature_columns else pd.DataFrame(index=df.index)
     y = df["BRS3"].astype(int)
 
+    # Feature selection
     n_feats = X.shape[1]
     k = max(1, min(k_features, n_feats)) if n_feats > 0 else 1
     fselect = SelectKBest(chi2, k=k)
-    X_train_new = fselect.fit_transform(X, y)
+    X_selected = fselect.fit_transform(X, y)
 
+    # --- SMOTE APPLIED HERE ---
+    # Apply SMOTE to the entire dataset before the final training
+    print(f"Original training distribution: {y.value_counts().to_dict()}")
+    smote = SMOTE(random_state=int(seed))
+    X_resampled, y_resampled = smote.fit_resample(X_selected, y)
+    print(f"Resampled training distribution: {pd.Series(y_resampled).value_counts().to_dict()}")
+
+    # Train the final model on the balanced (resampled) data
     clf = TabPFNClassifier(device="cpu")
-    clf.fit(X_train_new, y)
+    clf.fit(X_resampled, y_resampled)
 
     bundle = {
         "version": "2025-08-20",

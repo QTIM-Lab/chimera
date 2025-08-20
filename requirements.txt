@@ -6,3 +6,4 @@ joblib
 # TabPFN depends on PyTorch; include both explicitly for clarity
 torch
 tabpfn
+imblearn
