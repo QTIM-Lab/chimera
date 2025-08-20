@@ -125,6 +125,42 @@ This repository includes a container entrypoint and Dockerfile to run inference 
 The resulting /output/brs-probability.json will contain a single float value: the probability of BRS3 (BCG response subtype).
 
 
+### ARM/Apple Silicon (arm64) builds
+If your machine is ARM (e.g., Apple Silicon M1/M2/M3 or Linux arm64), you can build and run the container for arm64.
+
+- Build for ARM only (local image):
+  ```shell
+  docker build --platform=linux/arm64 -t chimera-tabpfn:arm64 .
+  ```
+
+- Run (same as before; platform is inferred from the image):
+  ```shell
+  docker run --rm \
+    -e CHIMERA_CLINICAL_JSON=/input/chimera-clinical-data-of-bladder-cancer-patients.json \
+    -e CHIMERA_OUTPUT_JSON=/output/brs-probability.json \
+    -e CHIMERA_MODEL=/model/model.joblib \
+    -v C:\\path\\to\\patient.json:/input/chimera-clinical-data-of-bladder-cancer-patients.json:ro \
+    -v C:\\dataset\\out:/output \
+    -v C:\\path\\to\\model.joblib:/model/model.joblib:ro \
+    chimera-tabpfn:arm64
+  ```
+
+- Optional: Build a multi-arch image (amd64 + arm64) with Buildx and load locally:
+  ```shell
+  docker buildx create --use --name chimera_builder || docker buildx use chimera_builder
+  docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    -t chimera-tabpfn:multiarch \
+    --load \
+    .
+  ```
+  If you intend to push to a registry, replace --load with --push and tag with your registry name.
+
+Notes:
+- The base image python:3.11-slim provides arm64 support; no Dockerfile changes are required.
+- PyTorch/TabPFN wheels are available for Linux arm64; the Docker build will fetch the correct wheels for your platform.
+
+
 ## Reproducibility
 You can make runs deterministic by setting a global seed.
 
