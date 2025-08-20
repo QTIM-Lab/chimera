@@ -105,24 +105,24 @@ This repository includes a container entrypoint and Dockerfile to run inference 
   docker build -t chimera-tabpfn:latest .
   ```
 
-- Run inference by mounting your clinical CSV, the saved model, and an output directory:
+- Run inference by mounting your clinical JSON, the saved model, and an output directory:
   ```shell
   docker run --rm \
-    -e CHIMERA_INPUT=/input/clinical.csv \
-    -e CHIMERA_OUTPUT=/output/predictions.csv \
+    -e CHIMERA_CLINICAL_JSON=/input/chimera-clinical-data-of-bladder-cancer-patients.json \
+    -e CHIMERA_OUTPUT_JSON=/output/brs-probability.json \
     -e CHIMERA_MODEL=/model/model.joblib \
-    -v C:\\dataset\\clinical_test.csv:/input/clinical.csv:ro \
+    -v C:\\path\\to\\patient.json:/input/chimera-clinical-data-of-bladder-cancer-patients.json:ro \
     -v C:\\dataset\\out:/output \
     -v C:\\path\\to\\model.joblib:/model/model.joblib:ro \
     chimera-tabpfn:latest
   ```
 
 - Default environment variables inside the container:
-  - CHIMERA_INPUT=/input/clinical.csv
-  - CHIMERA_OUTPUT=/output/predictions.csv
+  - CHIMERA_CLINICAL_JSON=/input/chimera-clinical-data-of-bladder-cancer-patients.json
+  - CHIMERA_OUTPUT_JSON=/output/brs-probability.json
   - CHIMERA_MODEL=/model/model.joblib
 
-The resulting /output/predictions.csv will have the required columns: slide_id, label (or -1 if absent), probability, prediction.
+The resulting /output/brs-probability.json will contain a single float value: the probability of BRS3 (BCG response subtype).
 
 
 ## Reproducibility
