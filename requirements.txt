@@ -1,0 +1,8 @@
+# Minimal dependencies for root-level code execution
+pandas
+numpy
+scikit-learn
+joblib
+# TabPFN depends on PyTorch; include both explicitly for clarity
+torch
+tabpfn
