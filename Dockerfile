@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Default I/O and model locations for Grand Challenge
-RUN mkdir -p /input /output /model
+RUN mkdir -p /input /output /model && if [ -f /app/model/model.joblib ]; then cp /app/model/model.joblib /model/model.joblib; fi
 ENV CHIMERA_CLINICAL_JSON=/input/chimera-clinical-data-of-bladder-cancer-patients.json
 ENV CHIMERA_OUTPUT_JSON=/output/brs-probability.json
 ENV CHIMERA_MODEL=/model/model.joblib
