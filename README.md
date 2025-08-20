@@ -1,6 +1,6 @@
 # CHIMERA Task 2 — Grand Challenge Docker Submission Guide
 
-This repository provides a ready-to-run Docker container for Grand Challenge inference using a TabPFN model on clinical data only. Follow the steps below to prepare the model bundle, build the image, test locally, and submit.
+This repository provides a ready-to-run Docker container for Grand Challenge inference on clinical data only. The container loads a scikit-learn style bundle produced by tabpfn_final.py (feature selector + classifier). While examples use TabPFN, you can also train RandomForest, XGBoost, or LightGBM. Follow the steps below to prepare the model bundle, build the image, test locally, and submit.
 
 What you will submit
 - A Docker image whose entrypoint reads a clinical JSON file and writes a single float (probability of BRS3) to an output JSON file.
@@ -17,19 +17,89 @@ Prerequisites
 - Architecture: linux/amd64 (no ARM builds).
 
 1) Train once and save the model bundle (required)
-Use the provided training utility to create a serialized bundle that includes the feature selector, the TabPFN classifier, and the feature schema.
+Use the provided training utility (tabpfn_final.py) to create a serialized bundle that includes the feature selector, the chosen classifier (TabPFN, RandomForest, XGBoost, or LightGBM), and the feature schema.
 
 Linux (bash) example:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python3 -m tabpfn_final --mode train --input_file ./dataset/clinical_data_BRS_binary.csv --save_model_path ./model/model.joblib --k_features 12 --seed 42
+# --model is required for train/predict modes. Choices: tabpfen, randomforest, xgboost, lightgbm (use the literal string "tabpfen" for TabPFN)
+python3 -m tabpfn_final --mode train \
+  --model tabpfen \
+  --input_file ./dataset/clinical_data_BRS_binary.csv \
+  --save_model_path ./model/model.joblib \
+  --k_features 12 \
+  --seed 42
+```
+Windows (PowerShell) example:
+```powershell
+python -m venv .venv
+. .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+# --model is required for train/predict modes. Choices: tabpfen, randomforest, xgboost, lightgbm (use the literal string "tabpfen" for TabPFN)
+python -m tabpfn_final --mode train `
+  --model tabpfen `
+  --input_file .\dataset\clinical_data_BRS_binary.csv `
+  --save_model_path .\model\model.joblib `
+  --k_features 12 `
+  --seed 42
 ```
 Notes
 - The training CSV must contain: patient_id, BRS3, and numeric feature columns.
 - Missing values are filled with 0 and negatives are clipped to 0 to satisfy chi2-based feature selection.
 - The output ./model/model.joblib will be used for inference.
+- CV mode is available to compare models before training a final bundle (see below).
+
+1a) Compare models with cross-validation (optional)
+Use CV to compare TabPFN, RandomForest, XGBoost, and LightGBM quickly. This prints a summary table (AUROC, F1, Precision, Recall).
+
+Linux (bash):
+```bash
+python3 -m tabpfn_final --mode cv --input_file ./dataset/clinical_data_BRS_binary.csv --k_features 12 --seed 42
+```
+Windows (PowerShell):
+```powershell
+python -m tabpfn_final --mode cv --input_file .\dataset\clinical_data_BRS_binary.csv --k_features 12 --seed 42
+```
+
+1b) Predict on a CSV with a saved bundle (outside Docker)
+If you want to evaluate predictions locally on a CSV (e.g., validation split), use predict mode. Note: --model must match the bundle you trained.
+
+Linux (bash):
+```bash
+python3 -m tabpfn_final --mode predict \
+  --model tabpfen \
+  --input_file ./dataset/clinical_data_BRS_binary.csv \
+  --model_path ./model/model.joblib \
+  --output_csv ./predictions.csv \
+  --seed 42
+```
+Windows (PowerShell):
+```powershell
+python -m tabpfn_final --mode predict `
+  --model tabpfen `
+  --input_file .\dataset\clinical_data_BRS_binary.csv `
+  --model_path .\model\model.joblib `
+  --output_csv .\predictions.csv `
+  --seed 42
+```
+The output CSV contains: slide_id, label (if present in input), probability (BRS3), prediction.
+
+Optional: Find the optimal number of features (k)
+We provide find_optimal_k.py to sweep k for SelectKBest with a fast 5-fold CV and SMOTE. It saves a plot k_features_performance.png and prints a table.
+
+Linux (bash):
+```bash
+python3 find_optimal_k.py
+```
+Windows (PowerShell):
+```powershell
+python .\find_optimal_k.py
+```
+Notes:
+- The script expects dataset/clinical_data_BRS_binary.csv by default. Edit the script or pass a different path when calling find_optimal_k() if needed.
+- Uses TabPFNClassifier(device='cpu'); the deprecated N_ensemble_configurations arg was removed.
 
 2) Build the Docker image
 Option A — Model mounted at runtime (recommended)
@@ -123,6 +193,7 @@ FAQ and troubleshooting
 Reference files in this repo
 - predict.py: container entrypoint that performs inference and writes the probability JSON.
 - Dockerfile: builds the runtime image and sets defaults for CHIMERA_* variables.
-- tabpfn_final.py: utilities to train the model bundle used by the container.
+- tabpfn_final.py: utilities to compare models (cv), train a bundle (--model required), and run CSV predictions with a saved bundle.
+- find_optimal_k.py: helper script to sweep feature counts (k) with SelectKBest and plot performance.
 
 That’s it. After verifying locally, package or push your image per the challenge’s submission instructions.
